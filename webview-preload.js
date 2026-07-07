@@ -440,7 +440,119 @@ if (window.__bcLoaded) {
     setTimeout(() => dot.remove(), 600);
   }
 
+  // ---- 로그인 자동 입력 ----
+  // 자격증명은 호스트(제어판)에서 넘겨받으며 이 파일에 저장하지 않는다.
+  function isVisible(el) {
+    if (!(el instanceof Element)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    const s = getComputedStyle(el);
+    return s.display !== "none" && s.visibility !== "hidden";
+  }
+
+  // 로그인 폼의 아이디/비밀번호 필드를 휴리스틱으로 찾는다(SPA·셀렉터 미상 대비).
+  function findLoginFields() {
+    const pwField =
+      Array.from(document.querySelectorAll('input[type="password"]')).find(isVisible) ||
+      document.querySelector('input[type="password"]');
+    if (!pwField) return null;
+
+    const skip = ["password", "checkbox", "radio", "button", "submit", "reset", "file", "image", "range", "color", "hidden"];
+    const texts = Array.from(document.querySelectorAll("input"))
+      .filter((el) => !skip.includes((el.getAttribute("type") || "text").toLowerCase()))
+      .filter(isVisible);
+
+    // 1순위: name/id/placeholder 등에 아이디성 키워드가 있는 필드
+    let idField = texts.find((el) => {
+      const hay = [el.name, el.id, el.placeholder, el.getAttribute("autocomplete"), el.getAttribute("aria-label")]
+        .join(" ").toLowerCase();
+      return /(user|login|email|account|\bid\b|아이디|이메일|계정)/.test(hay);
+    });
+    // 2순위: DOM 순서상 비밀번호 필드 바로 앞의 텍스트 입력
+    if (!idField) {
+      const all = Array.from(document.querySelectorAll("input"));
+      const pwIdx = all.indexOf(pwField);
+      idField = texts.filter((el) => all.indexOf(el) < pwIdx).pop() || texts[0] || null;
+    }
+    return { idField, pwField };
+  }
+
+  // React 등 프레임워크가 값 변경을 감지하도록 네이티브 setter + input/change 이벤트로 채운다.
+  function fillField(el, value) {
+    if (!el) return;
+    try { el.focus(); } catch (_) {}
+    setNativeValue(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    setNativeValue(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function findSubmit(form) {
+    let btn = form && form.querySelector('button[type="submit"], input[type="submit"]');
+    if (!btn) {
+      const scope = form || document;
+      btn = Array.from(scope.querySelectorAll('button, input[type="button"], [role="button"]'))
+        .filter(isVisible)
+        .find((b) => /(로그인|login|sign\s*in|접속)/i.test((b.innerText || b.value || "").trim()));
+    }
+    return btn || null;
+  }
+
+  // 로그인 실패(잘못된 자격증명) 시 페이지에 뜨는 오류 문구 패턴
+  const LOGIN_ERR_RE = /(아이디\s*또는\s*비밀번호|비밀번호가?\s*(?:틀|올바르지)|일치하지\s*않|올바르지\s*않습니다|로그인에?\s*실패|incorrect|invalid|failed|다시\s*(?:확인|시도))/i;
+
+  function stillOnLoginPage() {
+    return /(^|\/)login(\/|$)/i.test(location.pathname);
+  }
+
+  async function autoLogin(creds) {
+    const { id = "", pw = "", submit = true } = creds || {};
+    const ready = await waitForSelector('input[type="password"]', 8000);
+    if (!ready) {
+      ipcRenderer.sendToHost("autologin-result", { ok: false, code: "no-form", reason: "로그인 폼을 찾지 못했습니다." });
+      return;
+    }
+    const f = findLoginFields();
+    if (!f || !f.pwField) {
+      ipcRenderer.sendToHost("autologin-result", { ok: false, code: "no-form", reason: "입력 필드를 찾지 못했습니다." });
+      return;
+    }
+
+    fillField(f.idField, id);
+    await sleep(80);
+    fillField(f.pwField, pw);
+    await sleep(120);
+
+    if (!submit) { ipcRenderer.sendToHost("autologin-result", { ok: true }); return; }
+
+    const form = f.pwField.form || (f.pwField.closest && f.pwField.closest("form"));
+    const btn = findSubmit(form);
+    if (btn) {
+      btn.click();
+    } else if (form) {
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.submit();
+    }
+
+    // 제출 결과 감시: 성공하면 페이지가 이동해 이 컨텍스트가 사라진다.
+    // 실패하면 로그인 페이지에 남고 오류 문구가 뜨므로 이를 감지해 즉시 실패 보고한다.
+    const deadline = Date.now() + 9000;
+    while (Date.now() < deadline) {
+      if (pageHiding) return;          // 페이지 이동 중 = 성공 경로
+      if (!stillOnLoginPage()) return; // 이미 다른 페이지 = 성공
+      const hit = Array.from(document.querySelectorAll(
+        '[role="alert"], .error, [class*="error" i], [class*="alert" i], [class*="invalid" i], [class*="toast" i], .ant-form-item-explain, .ant-message'
+      )).some((el) => isVisible(el) && LOGIN_ERR_RE.test((el.innerText || "").trim()));
+      if (hit) { ipcRenderer.sendToHost("autologin-result", { ok: false, code: "bad-credentials" }); return; }
+      await sleep(300);
+    }
+    // 여기까지 오면 감지 실패 → 호스트(렌더러)의 타임아웃이 최종 판정
+  }
+
   // ---- 호스트(렌더러)로부터 명령 수신 ----
+  ipcRenderer.on("autologin", (_e, creds) => { autoLogin(creds); });
+
   ipcRenderer.on("set-recording", (_e, value) => setRecording(!!value));
 
   ipcRenderer.on("play-from", (_e, steps, startIndex) => {

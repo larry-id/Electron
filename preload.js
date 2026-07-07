@@ -21,5 +21,17 @@ contextBridge.exposeInMainWorld("api", {
   // JSON 내보내기/가져오기 (네이티브 대화상자)
   exportSteps: (steps, suggestedName) =>
     ipcRenderer.invoke("export:steps", steps, suggestedName),
-  importSteps: () => ipcRenderer.invoke("import:steps")
+  importSteps: () => ipcRenderer.invoke("import:steps"),
+
+  // 로그인 자격증명 (main이 safeStorage로 암호화 관리)
+  saveCreds: (id, pw, remember) => ipcRenderer.invoke("creds:save", id, pw, remember),
+  loadCreds: () => ipcRenderer.invoke("creds:load"),
+  clearCreds: () => ipcRenderer.invoke("creds:clear"),
+  logout: () => ipcRenderer.invoke("auth:logout"),
+
+  // 창 전환 (로그인 ↔ 메인)
+  loginSuccess: () => ipcRenderer.invoke("login:success"),
+  loginFailed: (msg) => ipcRenderer.invoke("auth:loginFailed", msg),
+  relogin: () => ipcRenderer.invoke("auth:relogin"),
+  loginMode: () => ipcRenderer.invoke("login:mode")
 });

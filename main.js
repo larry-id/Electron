@@ -3,18 +3,24 @@
 // 녹화/재생 상태 관리는 제어판 렌더러(renderer.js)가 단일 소스로 유지한다.
 // (renderer는 <webview> 네비게이션에도 살아남으므로 background.js 역할을 대신할 수 있다.)
 
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, session } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs/promises");
 const path = require("path");
 
-let win = null;
+let win = null;        // 현재 활성 메인 창(대화상자/updater 부모로 사용)
+let loginWin = null;   // 로그인 창(입력 폼 전용)
+let mainWin = null;    // 메인(앱) 창(자동 로그인 + 앱)
+let updaterStarted = false;
+let loginError = null; // 로그인 창에 표시할 오류 메시지(실패로 되돌아온 경우)
 
 // ---- 자동 업데이트 (electron-updater / GitHub Releases) ----
 // 배포된(설치된) 앱에서만 동작한다. dev(electron .) 에서는 업데이트 메타가 없어
 // checkForUpdates가 실패하므로 app.isPackaged로 가드한다.
 function setupAutoUpdate() {
   if (!app.isPackaged) return; // 개발 모드에서는 건너뜀
+  if (updaterStarted) return;  // 메인 창 생성 시 1회만
+  updaterStarted = true;
 
   autoUpdater.autoDownload = false;          // 다운로드 전에 사용자에게 먼저 물어본다
   autoUpdater.autoInstallOnAppQuit = false;  // 종료 시 자동 설치 안 함 — 사용자가 "지금 재시작"을 눌러야만 설치
@@ -85,54 +91,103 @@ async function writeScenarios(obj) {
   await fs.writeFile(scenariosFile(), JSON.stringify(obj, null, 2), "utf-8");
 }
 
-// 기본 메뉴의 Zoom In/Out/Reset(Ctrl +/-/0)은 webview 페이지가 아니라 제어판 UI를
-// 확대/축소해서 "동작하지 않는 것처럼" 보인다. zoom 항목을 뺀 커스텀 메뉴를 설정해
-// 단축키가 렌더러/게스트의 zoom 핸들러로 전달되게 한다.
-function buildMenu() {
-  const template = [
-    { role: "fileMenu" },
-    { role: "editMenu" },
-    {
-      label: "View",
-      submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" }
-        // Zoom 항목은 의도적으로 제외 (renderer.js / webview-preload.js가 처리)
-      ]
-    }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+function winPrefs() {
+  return {
+    preload: path.join(__dirname, "preload.js"),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: false,   // preload(path/url require)와 webview 게스트 preload(ipcRenderer) 사용을 위해 비활성화
+    webviewTag: true  // 대상 페이지를 <webview>로 띄우기 위해 필요
+  };
 }
 
-function createWindow() {
-  buildMenu();
-  win = new BrowserWindow({
+// 로그인 창: 사용자에게 보이는 앱 자체 로그인 화면. 내부의 숨은 webview가 실제 인증을 수행한다.
+function createLoginWindow() {
+  if (loginWin) { loginWin.focus(); return; }
+  loginWin = new BrowserWindow({
+    width: 480,
+    height: 680,
+    resizable: false,
+    title: "Nori-TC 로그인",
+    webPreferences: winPrefs()
+  });
+  loginWin.removeMenu();            // 로그인 창은 메뉴바(File/Edit/View) 숨김
+  loginWin.setMenuBarVisibility(false);
+  loginWin.loadFile("login.html");
+  loginWin.on("closed", () => { loginWin = null; });
+}
+
+// 메인 창: 로그인 성공 후 열리는 실제 앱 화면(webview + 제어판).
+function createMainWindow() {
+  if (mainWin) { mainWin.focus(); return; }
+  mainWin = new BrowserWindow({
     width: 1280,
     height: 860,
     title: "Nori-TC",
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,   // preload(path/url require)와 webview 게스트 preload(ipcRenderer) 사용을 위해 비활성화
-      webviewTag: true  // 대상 페이지를 <webview>로 띄우기 위해 필요
-    }
+    webPreferences: winPrefs()
   });
-
-  win.loadFile("index.html");
+  mainWin.removeMenu();             // 메뉴바(File/Edit/View) 제거
+  mainWin.setMenuBarVisibility(false);
+  win = mainWin; // 대화상자/updater 부모
+  mainWin.loadFile("index.html");
+  mainWin.on("closed", () => { if (win === mainWin) win = null; mainWin = null; });
+  setupAutoUpdate();
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  setupAutoUpdate();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// 저장된 자격증명(이전 로그인 내역) 존재 여부
+async function credsExist() {
+  try { await fs.access(credsFile()); return true; } catch (_) { return false; }
+}
+
+app.whenReady().then(async () => {
+  // 이전 로그인 내역이 있으면 로그인 창을 건너뛰고 메인 창으로 바로 진입(메인 창이 자동 로그인 수행).
+  // 없거나 로그아웃한 경우에만 로그인 창을 띄운다.
+  if (await credsExist()) createMainWindow();
+  else createLoginWindow();
+
+  app.on("activate", async () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      if (await credsExist()) createMainWindow();
+      else createLoginWindow();
+    }
   });
 });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// ---- 창 전환 (로그인 ↔ 메인) ----
+// 로그인 창 제출 성공 → 메인 창을 먼저 열고 로그인 창을 닫는다(창 0개로 앱 종료 방지).
+ipcMain.handle("login:success", () => {
+  loginError = null;
+  createMainWindow();
+  if (loginWin) loginWin.close();
+  return { ok: true };
+});
+
+// 메인 창의 자동 로그인이 실패 → 로그인 창(폼+오류)으로 되돌림.
+ipcMain.handle("auth:loginFailed", (_e, msg) => {
+  loginError = msg || "로그인에 실패했습니다.";
+  createLoginWindow();
+  if (mainWin) mainWin.close();
+  return { ok: true };
+});
+
+// 로그아웃 → 자격증명 + 세션 삭제 후 로그인 창으로(다른 아이디로 접속하는 길목)
+ipcMain.handle("auth:relogin", async () => {
+  try { await fs.unlink(credsFile()); } catch (_) {}
+  try { await session.fromPartition("persist:noritc").clearStorageData(); } catch (_) {}
+  loginError = null;
+  createLoginWindow();
+  if (mainWin) mainWin.close();
+  return { ok: true };
+});
+
+// 로그인 창이 읽어가는 상태(직전 실패 오류 메시지). 한 번 읽으면 비운다.
+ipcMain.handle("login:mode", () => {
+  const e = loginError; loginError = null;
+  return { error: e };
 });
 
 // ---- 시나리오 관리 (chrome.storage.local 대체) ----
@@ -157,6 +212,55 @@ ipcMain.handle("scenario:delete", async (_e, name) => {
   const all = await readScenarios();
   delete all[name];
   await writeScenarios(all);
+  return { ok: true };
+});
+
+// ---- 로그인 자격증명 저장 (safeStorage로 OS 키체인에 암호화) ----
+// 자격증명은 소스코드에 절대 넣지 않는다. 사용자가 제어판에 입력한 값을
+// "기억하기" 선택 시에만 userData/creds.dat 에 암호화하여 보관한다.
+function credsFile() {
+  return path.join(app.getPath("userData"), "creds.dat");
+}
+
+// 기억하기: remember=true 면 암호화 저장, false 면 저장 파일 삭제
+ipcMain.handle("creds:save", async (_e, id, pw, remember) => {
+  if (!remember) {
+    try { await fs.unlink(credsFile()); } catch (_) {}
+    return { ok: true, remembered: false };
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    // 암호화가 불가한 환경에서는 평문 저장을 거부한다(보안).
+    return { ok: false, reason: "이 환경에서는 암호화 저장을 사용할 수 없습니다." };
+  }
+  const payload = JSON.stringify({ id: id || "", pw: pw || "" });
+  const enc = safeStorage.encryptString(payload).toString("base64");
+  await fs.writeFile(credsFile(), JSON.stringify({ v: 1, enc }), "utf-8");
+  return { ok: true, remembered: true };
+});
+
+// 저장된 자격증명 복호화하여 반환(없거나 실패 시 null)
+ipcMain.handle("creds:load", async () => {
+  try {
+    const raw = await fs.readFile(credsFile(), "utf-8");
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.enc || !safeStorage.isEncryptionAvailable()) return null;
+    const dec = safeStorage.decryptString(Buffer.from(obj.enc, "base64"));
+    const data = JSON.parse(dec);
+    return { id: data.id || "", pw: data.pw || "" };
+  } catch (_) {
+    return null; // 파일 없음/복호화 실패
+  }
+});
+
+ipcMain.handle("creds:clear", async () => {
+  try { await fs.unlink(credsFile()); } catch (_) {}
+  return { ok: true };
+});
+
+// 로그아웃: 저장된 자격증명 삭제 + webview 세션 쿠키/스토리지 삭제
+ipcMain.handle("auth:logout", async () => {
+  try { await fs.unlink(credsFile()); } catch (_) {}
+  try { await session.fromPartition("persist:noritc").clearStorageData(); } catch (_) {}
   return { ok: true };
 });
 

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nori-TC 로그인</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body { font-family: system-ui, sans-serif; }
+
+      /* 실제 인증을 수행하는 webview는 로그인 카드 뒤에 가려져 사용자에게 보이지 않는다. */
+      #view { position: absolute; inset: 0; border: none; }
+
+      #loginScreen {
+        position: fixed; inset: 0; z-index: 10; background: #f4f5f7;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .loginCard {
+        width: 360px; max-width: 90%; padding: 34px 30px; background: #fff;
+        border: 1px solid #ececec; border-radius: 18px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, .07);
+      }
+      .loginCard .brand { font-size: 26px; font-weight: 800; color: #ff5a00; margin-bottom: 16px; }
+      .loginCard h2 { font-size: 22px; margin: 0 0 20px; color: #1a1a1a; }
+      .loginCard label { display: block; font-size: 13px; color: #444; margin: 14px 0 6px; }
+      .loginCard input {
+        width: 100%; padding: 12px; font-size: 14px;
+        border: 1px solid #ddd; border-radius: 10px;
+      }
+      .loginCard input:focus { outline: none; border-color: #ff5a00; }
+      /* 비밀번호 표시 토글(눈 아이콘) */
+      .pwWrap { position: relative; }
+      .pwWrap input { padding-right: 44px; }
+      .eyeBtn {
+        position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+        width: 32px; height: 32px; padding: 0; border: none; background: none;
+        cursor: pointer; color: #888; display: flex; align-items: center; justify-content: center;
+      }
+      .eyeBtn:hover { color: #333; }
+      .loginCard .submit {
+        width: 100%; margin-top: 16px; padding: 13px; font-size: 15px; font-weight: 700;
+        color: #fff; background: #111; border: none; border-radius: 10px; cursor: pointer;
+      }
+      .loginCard .submit:hover { background: #000; }
+      .loginCard .err { color: #c0392b; font-size: 13px; min-height: 18px; margin-top: 12px; text-align: center; }
+      #loginScreen .busyMsg { display: none; font-size: 15px; color: #555; }
+      #loginScreen.busy .loginCard { display: none; }
+      #loginScreen.busy .busyMsg { display: block; }
+    </style>
+  </head>
+  <body>
+    <!-- 인증 수행용 (가려짐). preload/src는 login-renderer.js가 런타임에 설정 -->
+    <webview id="view" partition="persist:noritc"></webview>
+
+    <div id="loginScreen">
+      <div class="loginCard">
+        <div class="brand">Nori TC</div>
+        <h2>로그인</h2>
+        <label for="ovId">아이디</label>
+        <input id="ovId" type="text" placeholder="아이디를 입력하세요" autocomplete="off" spellcheck="false" />
+        <label for="ovPw">비밀번호</label>
+        <div class="pwWrap">
+          <input id="ovPw" type="password" placeholder="비밀번호를 입력하세요" autocomplete="off" />
+          <button type="button" id="togglePw" class="eyeBtn" aria-label="비밀번호 표시" title="비밀번호 표시"></button>
+        </div>
+        <button id="doLoginBtn" class="submit">로그인</button>
+        <div class="err" id="ovErr"></div>
+      </div>
+      <div class="busyMsg">로그인 중…</div>
+    </div>
+
+    <script src="login-renderer.js"></script>
+  </body>
+</html>

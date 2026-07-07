@@ -26,7 +26,9 @@
       "preload.js",
       "renderer.js",
       "webview-preload.js",
-      "index.html"
+      "index.html",
+      "login.html",
+      "login-renderer.js"
     ],
     "win": {
       "target": "nsis"
