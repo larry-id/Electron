@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nori-TC</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: system-ui, sans-serif; color: #222;
+        display: flex; flex-direction: column; height: 100vh;
+      }
+
+      /* 상단 주소창 */
+      #topbar {
+        display: flex; gap: 6px; align-items: center;
+        padding: 8px 10px; border-bottom: 1px solid #e3e3e3; background: #fafafa;
+        flex: 0 0 auto;
+      }
+      #topbar button {
+        padding: 6px 10px; font-size: 14px; border: 1px solid #ccc;
+        border-radius: 6px; background: #fff; cursor: pointer; white-space: nowrap;
+      }
+      #topbar button:hover { background: #eee; }
+      #address {
+        flex: 1; padding: 7px 10px; font-size: 13px;
+        border: 1px solid #ccc; border-radius: 6px;
+      }
+      #topbar .zoom-btn { flex: 0 0 auto; padding: 6px 9px; font-weight: 600; }
+      #zoomLabel {
+        flex: 0 0 auto; min-width: 46px; text-align: center; cursor: pointer;
+        font-size: 12px; color: #555; user-select: none;
+      }
+      #zoomLabel:hover { color: #1D9E75; }
+
+      /* 본문: webview + 사이드 패널 */
+      #body { flex: 1; display: flex; min-height: 0; }
+      #view { flex: 1; border: none; }
+      #panel {
+        flex: 0 0 420px; border-left: 1px solid #e3e3e3;
+        padding: 14px; overflow-y: auto; background: #fff;
+      }
+
+      h1 { font-size: 15px; margin: 0 0 12px; }
+      .row { display: flex; flex-wrap: nowrap; gap: 6px; margin-bottom: 8px; align-items: center; }
+      button { flex: 1; padding: 8px 10px; font-size: 13px; line-height: 1.2;
+               white-space: nowrap; border: 1px solid #ccc;
+               border-radius: 6px; background: #f7f7f7; cursor: pointer; }
+      button:hover { background: #eee; }
+      button:disabled { opacity: .5; cursor: default; }
+      button.primary { background: #1D9E75; color: #fff; border-color: #1D9E75; }
+      button.danger { color: #A32D2D; }
+      input, select { padding: 6px; border: 1px solid #ccc; border-radius: 6px;
+                      font-size: 13px; box-sizing: border-box; }
+      .label { font-size: 13px; white-space: nowrap; flex: 0 0 auto; }
+      .count { font-size: 12px; color: #666; margin: 6px 0; }
+      #status { font-size: 12px; color: #555; margin-top: 10px; min-height: 16px; }
+      hr { border: none; border-top: 1px solid #eee; margin: 12px 0; }
+      .small { flex: 0 0 56px; }
+
+      #log { max-height: 260px; overflow-y: auto; border: 1px solid #eee;
+             border-radius: 6px; margin: 6px 0; }
+      .logItem { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+                 font-size: 12px; border-bottom: 1px solid #f2f2f2; }
+      .logItem:last-child { border-bottom: none; }
+      .logItem .idx { color: #999; flex: 0 0 18px; text-align: right; }
+      .logItem .body { flex: 1; min-width: 0; }
+      .logItem .body .lbl { font-weight: 600; white-space: nowrap;
+                            overflow: hidden; text-overflow: ellipsis; }
+      .logItem .body .meta { color: #888; font-size: 11px;
+                             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .logItem .del { flex: 0 0 auto; padding: 2px 6px; font-size: 11px; }
+      .logEmpty { padding: 10px; font-size: 12px; color: #999; text-align: center; }
+      .badge-click { color: #1D9E75; }
+      .badge-nav { color: #2E6FB5; }
+      .badge-input { color: #7A3DB8; }
+
+      /* 떴다가 사라지는 토스트 알림 */
+      #toast-wrap {
+        position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+        z-index: 99999; display: flex; flex-direction: column; gap: 8px;
+        align-items: center; pointer-events: none;
+      }
+      .toast {
+        background: rgba(34, 34, 34, .92); color: #fff;
+        padding: 11px 20px; border-radius: 9px; font-size: 13px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, .28); white-space: nowrap;
+        opacity: 0; transform: translateY(-10px);
+        transition: opacity .3s ease, transform .3s ease;
+      }
+      .toast.show { opacity: 1; transform: translateY(0); }
+    </style>
+  </head>
+  <body>
+    <div id="topbar">
+      <button id="backBtn" title="뒤로">◀</button>
+      <button id="fwdBtn" title="앞으로">▶</button>
+      <button id="reloadBtn" title="새로고침">⟳</button>
+      <input id="address" type="text" placeholder="https://..." />
+      <button id="goBtn">이동</button>
+      <button id="zoomOutBtn" class="zoom-btn" title="축소 (Ctrl+-)">－</button>
+      <span id="zoomLabel" title="클릭하면 100%로 복원">100%</span>
+      <button id="zoomInBtn" class="zoom-btn" title="확대 (Ctrl++)">＋</button>
+    </div>
+
+    <div id="body">
+      <!-- 대상 페이지. preload/src는 renderer.js가 런타임에 설정 -->
+      <webview id="view"></webview>
+
+      <div id="panel">
+        <h1>Nori-TC</h1>
+
+        <div class="row">
+          <button id="recordBtn" class="primary">● 녹화 시작</button>
+          <button id="clearBtn" class="danger">비우기</button>
+        </div>
+
+        <div class="row">
+          <span class="label">반복</span>
+          <input id="repeat" type="number" min="1" value="1" style="flex:0 0 64px" />
+          <button id="playBtn">▶ 재생</button>
+          <button id="stopBtn" disabled>■ 중지</button>
+        </div>
+
+        <div class="count" id="count">스텝 0개</div>
+
+        <div id="log"></div>
+
+        <div class="row">
+          <button id="exportBtn">⭳ 내보내기(JSON)</button>
+          <button id="importBtn">⭱ 가져오기(JSON)</button>
+        </div>
+
+        <hr />
+
+        <div class="row">
+          <span class="label">시나리오</span>
+          <select id="scenarioSelect" style="flex:1"></select>
+        </div>
+        <div class="row">
+          <input id="scenarioName" placeholder="이름" style="flex:1" />
+          <button id="saveBtn" class="small">저장</button>
+          <button id="applyBtn" class="small">적용</button>
+          <button id="deleteBtn" class="small danger">삭제</button>
+        </div>
+
+        <div id="status">준비됨. 주소를 입력해 페이지를 연 뒤 녹화를 시작하세요.</div>
+      </div>
+    </div>
+
+    <div id="toast-wrap"></div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

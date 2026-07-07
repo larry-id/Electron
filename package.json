@@ -1,0 +1,34 @@
+{
+  "name": "nori-tc-electron",
+  "version": "2.0.0",
+  "description": "클릭·텍스트입력·페이지이동을 녹화하고 그대로 재생하는 Electron 자동화 도구 (browser-clicker-ext의 Electron 포팅)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.norisystem.noritc",
+    "productName": "Nori-TC",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "webview-preload.js",
+      "index.html"
+    ],
+    "win": {
+      "target": "dir"
+    }
+  }
+}
