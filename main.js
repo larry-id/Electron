@@ -4,10 +4,67 @@
 // (renderer는 <webview> 네비게이션에도 살아남으므로 background.js 역할을 대신할 수 있다.)
 
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const fs = require("fs/promises");
 const path = require("path");
 
 let win = null;
+
+// ---- 자동 업데이트 (electron-updater / GitHub Releases) ----
+// 배포된(설치된) 앱에서만 동작한다. dev(electron .) 에서는 업데이트 메타가 없어
+// checkForUpdates가 실패하므로 app.isPackaged로 가드한다.
+function setupAutoUpdate() {
+  if (!app.isPackaged) return; // 개발 모드에서는 건너뜀
+
+  autoUpdater.autoDownload = false;          // 다운로드 전에 사용자에게 먼저 물어본다
+  autoUpdater.autoInstallOnAppQuit = false;  // 종료 시 자동 설치 안 함 — 사용자가 "지금 재시작"을 눌러야만 설치
+
+  autoUpdater.on("error", (err) => {
+    console.error("[updater] error:", err == null ? "unknown" : (err.stack || err).toString());
+  });
+
+  // 새 버전 발견 → 다운로드 여부를 사용자에게 먼저 물어본다.
+  autoUpdater.on("update-available", async (info) => {
+    console.log("[updater] 새 버전 발견:", info.version);
+    const { response } = await dialog.showMessageBox(win, {
+      type: "info",
+      buttons: ["다운로드", "나중에"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "업데이트 있음",
+      message: `새 버전 ${info.version} 이(가) 있습니다.`,
+      detail: "지금 다운로드하시겠습니까? 다운로드가 끝나면 재시작 여부를 다시 여쭤봅니다."
+    });
+    if (response === 0) {
+      autoUpdater.downloadUpdate().catch((err) => {
+        console.error("[updater] 다운로드 실패:", err);
+      });
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    console.log("[updater] 최신 버전입니다.");
+  });
+
+  // 다운로드 완료 → 사용자에게 지금 재시작할지 물어본다.
+  autoUpdater.on("update-downloaded", async (info) => {
+    const { response } = await dialog.showMessageBox(win, {
+      type: "info",
+      buttons: ["지금 재시작", "나중에"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "업데이트 준비 완료",
+      message: `새 버전 ${info.version} 이(가) 다운로드되었습니다.`,
+      detail: "지금 재시작하면 업데이트가 적용됩니다. '나중에'를 선택하면 다음 종료 시 자동 설치됩니다."
+    });
+    if (response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  });
+
+  // 시작 시 1회 확인 (에러는 위 error 핸들러가 처리)
+  autoUpdater.checkForUpdates().catch(() => {});
+}
 
 // 시나리오 저장소: userData/scenarios.json 에 { name: steps[] } 형태로 보관
 function scenariosFile() {
@@ -68,6 +125,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+  setupAutoUpdate();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
