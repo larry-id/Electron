@@ -190,6 +190,9 @@ ipcMain.handle("login:mode", () => {
   return { error: e };
 });
 
+// 앱 버전(package.json version) — 로그인 창 제목 등에 표시용
+ipcMain.handle("app:getVersion", () => app.getVersion());
+
 // ---- 시나리오 관리 (chrome.storage.local 대체) ----
 ipcMain.handle("scenario:list", async () => {
   const all = await readScenarios();
