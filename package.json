@@ -1,6 +1,6 @@
 {
   "name": "nori-tc-electron",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "클릭·텍스트입력·페이지이동을 녹화하고 그대로 재생하는 Electron 자동화 도구 (browser-clicker-ext의 Electron 포팅)",
   "main": "main.js",
   "scripts": {
