@@ -3,9 +3,18 @@
 //  - 텍스트 입력/선택값/Enter 녹화
 //  - 페이지 이동(navigation)을 가로지른 재생 연속성
 //  - 셀렉터 우선 재생, 좌표 폴백, 시각 효과
+//  - 로그인 폼 자동 입력
 // 통신: chrome.runtime.sendMessage → ipcRenderer.sendToHost (호스트=제어판 렌더러)
 //       chrome.runtime.onMessage  → ipcRenderer.on (호스트가 webview.send 로 보냄)
 // webview preload는 네비게이션마다 다시 실행되므로 content script와 동일한 수명을 가진다.
+//
+// 구성(관심사별 섹션):
+//   0. 부트스트랩 / 공유 상태     1. 공통 유틸(셀렉터·요소설명·DOM 헬퍼)
+//   2. 녹화: 종료 오버레이         3. 녹화: 캡처(클릭/입력/Enter)
+//   4. 재생: 스크롤 & 스텝 실행    5. 로그인 폼 자동 입력
+//   6. 호스트 연결(IPC 수신·입력 전달·초기 신호)
+// NOTE: preload는 파일 1개만 주입 가능하므로 renderer/ 처럼 여러 파일로 나누지 않고
+//       한 파일 안에서 섹션으로 구획한다. (ES 모듈/로컬 require 제약 회피)
 
 const { ipcRenderer } = require("electron");
 
@@ -13,6 +22,21 @@ if (window.__bcLoaded) {
   // 재주입 방지 (보통 preload는 페이지마다 1회지만 방어적으로)
 } else {
   window.__bcLoaded = true;
+
+  // ==================================================================
+  // 0. 부트스트랩 / 공유 상태
+  // ==================================================================
+
+  // 녹화 여부는 호스트(렌더러)가 단일 소스로 관리한다. 여기선 표시/캡처용 로컬 미러.
+  let recording = false;
+  // 페이지가 언로드(이동) 중이면 재생 루프를 멈추기 위한 플래그
+  let pageHiding = false;
+  window.addEventListener("pagehide", () => { pageHiding = true; }, true);
+  window.addEventListener("beforeunload", () => { pageHiding = true; }, true);
+
+  // ==================================================================
+  // 1. 공통 유틸 (셀렉터 · 요소 설명 · DOM 헬퍼)
+  // ==================================================================
 
   // ---- 안정적인 CSS 셀렉터 생성 (확장 버전과 동일 로직) ----
   function buildSelector(el) {
@@ -48,14 +72,108 @@ if (window.__bcLoaded) {
     return parts.join(" > ");
   }
 
-  // 녹화 여부는 호스트(렌더러)가 단일 소스로 관리한다. 여기선 표시/캡처용 로컬 미러.
-  let recording = false;
-  // 페이지가 언로드(이동) 중이면 재생 루프를 멈추기 위한 플래그
-  let pageHiding = false;
-  window.addEventListener("pagehide", () => { pageHiding = true; }, true);
-  window.addEventListener("beforeunload", () => { pageHiding = true; }, true);
+  // 입력 필드 종류 판별(값/선택/contenteditable). 클릭 스텝으로 처리할 것은 null.
+  function editableInfo(el) {
+    if (!(el instanceof Element)) return null;
+    const tag = el.nodeName.toLowerCase();
+    if (tag === "input") {
+      const t = (el.getAttribute("type") || "text").toLowerCase();
+      if (["checkbox", "radio", "button", "submit", "reset", "file", "image", "range", "color"].includes(t)) {
+        return null; // 클릭 스텝으로 처리
+      }
+      return { kind: "value" };
+    }
+    if (tag === "textarea") return { kind: "value" };
+    if (tag === "select") return { kind: "select" };
+    if (el.isContentEditable) return { kind: "contenteditable" };
+    return null;
+  }
 
-  // ---- 페이지에 떠 있는 "녹화 종료" 버튼 오버레이 ----
+  // 입력 요소의 사람이 읽을 수 있는 라벨(aria/placeholder/name/id 순)
+  function describeInput(el) {
+    const aria = el.getAttribute("aria-label");
+    if (aria) return aria.trim().slice(0, 40);
+    const ph = el.getAttribute("placeholder");
+    if (ph) return ph.trim().slice(0, 40);
+    if (el.name) return el.name;
+    if (el.id) return el.id;
+    return el.nodeName.toLowerCase();
+  }
+
+  // 클릭 대상 요소의 사람이 읽을 수 있는 라벨(aria/title/alt/텍스트 순)
+  function describeElement(el) {
+    if (!(el instanceof Element)) return "";
+    const aria = el.getAttribute("aria-label");
+    if (aria) return aria.trim().slice(0, 40);
+    const title = el.getAttribute("title");
+    if (title) return title.trim().slice(0, 40);
+    const alt = el.getAttribute("alt");
+    if (alt) return alt.trim().slice(0, 40);
+    const text = (el.innerText || el.textContent || "").trim();
+    if (text) return text.replace(/\s+/g, " ").slice(0, 40);
+    const tag = el.nodeName.toLowerCase();
+    return el.id ? `${tag}#${el.id}` : tag;
+  }
+
+  // 요소가 화면에 실제로 보이는지(크기·display·visibility)
+  function isVisible(el) {
+    if (!(el instanceof Element)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    const s = getComputedStyle(el);
+    return s.display !== "none" && s.visibility !== "hidden";
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 클릭/입력 위치에 잠깐 떴다 사라지는 원형 시각 효과
+  function flash(x, y, color) {
+    const dot = document.createElement("div");
+    Object.assign(dot.style, {
+      position: "fixed", left: x - 10 + "px", top: y - 10 + "px",
+      width: "20px", height: "20px", border: `2px solid ${color}`,
+      borderRadius: "50%", background: color + "33",
+      pointerEvents: "none", zIndex: 2147483647, transition: "opacity .5s"
+    });
+    document.body.appendChild(dot);
+    setTimeout(() => (dot.style.opacity = "0"), 50);
+    setTimeout(() => dot.remove(), 600);
+  }
+
+  // React 등 프레임워크가 값 변경을 감지하도록 프로토타입의 네이티브 value setter 사용
+  function setNativeValue(el, value) {
+    try {
+      const proto = Object.getPrototypeOf(el);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && desc.set) {
+        desc.set.call(el, value);
+        return;
+      }
+    } catch (_) {}
+    el.value = value;
+  }
+
+  // 셀렉터가 나타날 때까지(또는 timeout까지) 대기
+  function waitForSelector(selector, timeout) {
+    return new Promise((resolve) => {
+      if (!selector) return resolve(false);
+      if (document.querySelector(selector)) return resolve(true);
+      const start = Date.now();
+      const timer = setInterval(() => {
+        if (document.querySelector(selector)) {
+          clearInterval(timer);
+          resolve(true);
+        } else if (Date.now() - start > timeout) {
+          clearInterval(timer);
+          resolve(false);
+        }
+      }, 100);
+    });
+  }
+
+  // ==================================================================
+  // 2. 녹화 — 페이지에 떠 있는 "녹화 종료" 버튼 오버레이
+  // ==================================================================
   const STOP_BTN_ID = "__bc_stop_btn";
 
   function showStopButton() {
@@ -92,32 +210,9 @@ if (window.__bcLoaded) {
     else hideStopButton();
   }
 
-  // ---- 입력(타이핑) 녹화 지원 ----
-  function editableInfo(el) {
-    if (!(el instanceof Element)) return null;
-    const tag = el.nodeName.toLowerCase();
-    if (tag === "input") {
-      const t = (el.getAttribute("type") || "text").toLowerCase();
-      if (["checkbox", "radio", "button", "submit", "reset", "file", "image", "range", "color"].includes(t)) {
-        return null; // 클릭 스텝으로 처리
-      }
-      return { kind: "value" };
-    }
-    if (tag === "textarea") return { kind: "value" };
-    if (tag === "select") return { kind: "select" };
-    if (el.isContentEditable) return { kind: "contenteditable" };
-    return null;
-  }
-
-  function describeInput(el) {
-    const aria = el.getAttribute("aria-label");
-    if (aria) return aria.trim().slice(0, 40);
-    const ph = el.getAttribute("placeholder");
-    if (ph) return ph.trim().slice(0, 40);
-    if (el.name) return el.name;
-    if (el.id) return el.id;
-    return el.nodeName.toLowerCase();
-  }
+  // ==================================================================
+  // 3. 녹화 — 캡처 (클릭 / 입력 / Enter)
+  // ==================================================================
 
   function onInput(e) {
     if (!recording) return;
@@ -169,20 +264,6 @@ if (window.__bcLoaded) {
     flash(step.x, step.y, "#2E6FB5");
   }
 
-  function describeElement(el) {
-    if (!(el instanceof Element)) return "";
-    const aria = el.getAttribute("aria-label");
-    if (aria) return aria.trim().slice(0, 40);
-    const title = el.getAttribute("title");
-    if (title) return title.trim().slice(0, 40);
-    const alt = el.getAttribute("alt");
-    if (alt) return alt.trim().slice(0, 40);
-    const text = (el.innerText || el.textContent || "").trim();
-    if (text) return text.replace(/\s+/g, " ").slice(0, 40);
-    const tag = el.nodeName.toLowerCase();
-    return el.id ? `${tag}#${el.id}` : tag;
-  }
-
   // mousedown 단계에서 기록: 링크/버튼 클릭으로 페이지가 곧바로 언로드돼도 스텝 누락 방지
   function onClick(e) {
     if (!recording) return;
@@ -204,6 +285,10 @@ if (window.__bcLoaded) {
     ipcRenderer.sendToHost("step", step);
     flash(e.clientX, e.clientY, "#1D9E75");
   }
+
+  // ==================================================================
+  // 4. 재생 — 스크롤 & 스텝 실행
+  // ==================================================================
 
   // 스크롤 속도(픽셀당 ms). 값이 클수록 더 천천히.
   const SCROLL_MS_PER_PX = 2.2;
@@ -272,18 +357,6 @@ if (window.__bcLoaded) {
       else target.dispatchEvent(new MouseEvent("click", mouseOpts));
     }
     return { ok: true };
-  }
-
-  function setNativeValue(el, value) {
-    try {
-      const proto = Object.getPrototypeOf(el);
-      const desc = Object.getOwnPropertyDescriptor(proto, "value");
-      if (desc && desc.set) {
-        desc.set.call(el, value);
-        return;
-      }
-    } catch (_) {}
-    el.value = value;
   }
 
   // ---- 재생: 녹화된 텍스트/선택값을 한 글자씩 입력 ----
@@ -374,23 +447,6 @@ if (window.__bcLoaded) {
     return { ok: true };
   }
 
-  function waitForSelector(selector, timeout) {
-    return new Promise((resolve) => {
-      if (!selector) return resolve(false);
-      if (document.querySelector(selector)) return resolve(true);
-      const start = Date.now();
-      const timer = setInterval(() => {
-        if (document.querySelector(selector)) {
-          clearInterval(timer);
-          resolve(true);
-        } else if (Date.now() - start > timeout) {
-          clearInterval(timer);
-          resolve(false);
-        }
-      }, 100);
-    });
-  }
-
   // 이 페이지에 해당하는 스텝들을 순서대로 재생.
   // 페이지 이동이 필요한 스텝을 만나면 호스트에 넘기고 종료(다음 페이지에서 이어감).
   async function playFrom(steps, startIndex, resumed) {
@@ -425,30 +481,10 @@ if (window.__bcLoaded) {
     ipcRenderer.sendToHost("play-done");
   }
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  function flash(x, y, color) {
-    const dot = document.createElement("div");
-    Object.assign(dot.style, {
-      position: "fixed", left: x - 10 + "px", top: y - 10 + "px",
-      width: "20px", height: "20px", border: `2px solid ${color}`,
-      borderRadius: "50%", background: color + "33",
-      pointerEvents: "none", zIndex: 2147483647, transition: "opacity .5s"
-    });
-    document.body.appendChild(dot);
-    setTimeout(() => (dot.style.opacity = "0"), 50);
-    setTimeout(() => dot.remove(), 600);
-  }
-
-  // ---- 로그인 자동 입력 ----
-  // 자격증명은 호스트(제어판)에서 넘겨받으며 이 파일에 저장하지 않는다.
-  function isVisible(el) {
-    if (!(el instanceof Element)) return false;
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) return false;
-    const s = getComputedStyle(el);
-    return s.display !== "none" && s.visibility !== "hidden";
-  }
+  // ==================================================================
+  // 5. 로그인 폼 자동 입력
+  //    자격증명은 호스트(제어판)에서 넘겨받으며 이 파일에 저장하지 않는다.
+  // ==================================================================
 
   // 로그인 폼의 아이디/비밀번호 필드를 휴리스틱으로 찾는다(SPA·셀렉터 미상 대비).
   function findLoginFields() {
@@ -549,6 +585,10 @@ if (window.__bcLoaded) {
     }
     // 여기까지 오면 감지 실패 → 호스트(렌더러)의 타임아웃이 최종 판정
   }
+
+  // ==================================================================
+  // 6. 호스트(렌더러) 연결 — IPC 수신 · 입력 전달 · 초기 신호
+  // ==================================================================
 
   // ---- 호스트(렌더러)로부터 명령 수신 ----
   ipcRenderer.on("autologin", (_e, creds) => { autoLogin(creds); });
