@@ -33,8 +33,5 @@ contextBridge.exposeInMainWorld("api", {
   loginSuccess: () => ipcRenderer.invoke("login:success"),
   loginFailed: (msg) => ipcRenderer.invoke("auth:loginFailed", msg),
   relogin: () => ipcRenderer.invoke("auth:relogin"),
-  loginMode: () => ipcRenderer.invoke("login:mode"),
-
-  // 앱 버전 (창 제목 표시용)
-  getVersion: () => ipcRenderer.invoke("app:getVersion")
+  loginMode: () => ipcRenderer.invoke("login:mode")
 });

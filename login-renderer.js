@@ -67,14 +67,6 @@ togglePw.addEventListener("click", () => {
   try { ($("ovId").value ? $("ovPw") : $("ovId")).focus(); } catch (_) {}
 })();
 
-// 창 제목에 앱 버전 표시 → "Nori-TC 로그인 v2.0.1"
-(async () => {
-  try {
-    const v = await window.api.getVersion();
-    if (v) document.title = `Nori-TC 로그인 v${v}`;
-  } catch (_) {}
-})();
-
 // 제출 후 이 시간 안에 앱 페이지로 못 가면 실패로 간주(오류 문구 감지 실패 대비 안전망)
 function startWatch() {
   clearTimeout(watchTimer);
