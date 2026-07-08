@@ -119,7 +119,7 @@
     </div>
 
     <div id="body">
-      <!-- 대상 페이지. preload/src는 renderer.js가 런타임에 설정.
+      <!-- 대상 페이지. preload/src는 renderer/core.js가 런타임에 설정.
            partition: 세션 쿠키를 디스크에 유지 → 재실행 시 로그인 상태 지속 -->
       <webview id="view" partition="persist:noritc"></webview>
 
@@ -175,6 +175,15 @@
 
     <div id="toast-wrap"></div>
 
-    <script src="renderer.js"></script>
+    <!-- 제어판 렌더러 모듈 (클래식 스크립트: 전역 스코프 공유, 순서 중요) -->
+    <script src="renderer/core.js"></script>
+    <script src="renderer/log-view.js"></script>
+    <script src="renderer/navigation.js"></script>
+    <script src="renderer/recorder.js"></script>
+    <script src="renderer/playback.js"></script>
+    <script src="renderer/scenario.js"></script>
+    <script src="renderer/ipc-router.js"></script>
+    <script src="renderer/auth.js"></script>
+    <script src="renderer/init.js"></script>
   </body>
 </html>

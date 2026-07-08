@@ -24,7 +24,7 @@
     "files": [
       "main.js",
       "preload.js",
-      "renderer.js",
+      "renderer/**/*.js",
       "webview-preload.js",
       "index.html",
       "login.html",
