@@ -41,7 +41,8 @@
       {
         "provider": "github",
         "owner": "larry-id",
-        "repo": "Electron"
+        "repo": "Electron",
+        "releaseType": "release"
       }
     ]
   },

@@ -1,0 +1,71 @@
+# Nori-TC 자동 릴리스 (GitHub Actions)
+#
+# 목적: 여러 개발자가 참여해도 "버전 태그 푸시"만으로 일관되게 릴리스되도록 자동화.
+#       개인용 PAT(GH_TOKEN) 없이 Actions 기본 제공 토큰으로 GitHub Releases에 업로드한다.
+#
+# 사용법(개발자 릴리스 절차):
+#   npm version patch            # package.json 버전 +0.0.1 + 커밋 + v태그 자동 생성
+#   git push origin <브랜치> --tags
+#   → v* 태그가 올라가면 이 워크플로가 windows 러너에서 빌드 후 자동 게시
+#
+# 참고:
+#   - 러너는 깨끗한 환경이라 ELECTRON_RUN_AS_NODE / winCodeSign 같은 로컬 이슈가 없다.
+#   - electron-builder 기본값은 릴리스를 "초안(draft)"으로 올린다.
+#     → 업로드 후 GitHub의 Releases 페이지에서 직접 "Publish" 해야 사용자 자동 업데이트가 동작한다.
+#       (자동 정식 게시를 원하면 package.json build.publish 에 releaseType: "release" 추가)
+
+name: Release
+
+# v2.0.2 처럼 v로 시작하는 태그가 푸시될 때 실행
+on:
+  push:
+    tags:
+      - "v*"
+  # 필요 시 Actions 탭에서 수동 실행도 가능
+  workflow_dispatch:
+
+# 같은 태그로 중복 실행되면 이전 실행을 취소
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions 기본 토큰(GITHUB_TOKEN)에 릴리스 생성/자산 업로드 권한 부여
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # NSIS(Windows) 설치본 타겟이므로 windows 러너에서 빌드
+    runs-on: windows-latest
+
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 태그(vX.Y.Z)와 package.json version 이 일치하는지 검증 → 불일치 릴리스 방지
+      - name: 버전-태그 일치 확인
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG / package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::태그 v$TAG 와 package.json 버전 $PKG 이(가) 다릅니다. npm version 으로 맞춰주세요."
+            exit 1
+          fi
+
+      - name: 의존성 설치 (lockfile 기준)
+        run: npm ci
+
+      # 빌드 + GitHub Releases 업로드.
+      # electron-builder 는 GH_TOKEN 을 읽으며, Actions 기본 토큰을 그대로 사용한다(개인 PAT 불필요).
+      - name: 빌드 및 게시
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
