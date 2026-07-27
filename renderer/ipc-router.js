@@ -66,8 +66,8 @@ view.addEventListener("ipc-message", (e) => {
     case "play-done":
       playing = false;
       setPlaying(false);
-      setStatus("재생 완료.");
-      showToast("재생이 종료되었습니다.");
+      setStatus("시나리오 재생 완료.");
+      showToast("시나리오가 정상적으로 종료되었습니다.");
       break;
 
     case "play-abort":
