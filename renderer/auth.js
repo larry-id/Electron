@@ -70,7 +70,6 @@ async function onAuthenticated() {
   clearTimeout(loginWatchTimer);
   await showWhoAmI();
   hideAuthOverlay();
-  setStatus("로그인됨.");
 }
 
 function onViewSettled(url) {
