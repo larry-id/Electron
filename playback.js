@@ -31,8 +31,6 @@ function beginPlayback(repeat) {
   for (let r = 0; r < repeat; r++) playSteps.push(...steps);
   playCursor = 0;
   playing = true;
-  paused = false;                 // 새 재생은 항상 일시정지 해제 상태로 시작
-  sendToGuest("set-paused", false);
   setPlaying(true);
   if (activeScenario) setScenarioRunning(activeScenario); // 리스트에 "실행 중" 표시
 
@@ -60,30 +58,9 @@ $("stopBtn").addEventListener("click", () => {
   batchRunning = false;   // 전체 실행 중이었다면 취소
   batchNames = [];
   playing = false;
-  paused = false;
-  sendToGuest("set-paused", false);
   setPlaying(false);
-  renderScenarioList();
   setStatus("재생 중지 요청됨 (진행 중 스텝이 끝난 뒤 멈춤).");
 });
-
-// ---- 일시정지 / 이어서 재생 ----
-// 게스트 재생 루프가 각 스텝 전에 paused 를 확인해 대기한다(webview-preload set-paused).
-function pausePlayback() {
-  if (!playing || paused) return;
-  paused = true;
-  sendToGuest("set-paused", true);
-  renderScenarioList();
-  setStatus("일시정지됨. (▶ 를 누르면 이어서 재생)");
-}
-
-function resumePlayback() {
-  if (!playing || !paused) return;
-  paused = false;
-  sendToGuest("set-paused", false);
-  renderScenarioList();
-  setStatus("재생 재개…");
-}
 
 function setPlaying(p) {
   $("playBtn").disabled = p;

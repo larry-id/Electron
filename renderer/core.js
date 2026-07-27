@@ -36,8 +36,16 @@ let lastNavUrl = null;     // 녹화 중 마지막으로 기록한 이동 URL
 let lastClickTs = 0;       // delay 계산용
 
 let playing = false;
+let paused = false;        // 재생 일시정지 여부 (게스트 재생 루프가 대기)
 let playSteps = [];
 let playCursor = 0;        // 재생 중 다음에 실행할 스텝 인덱스 (네비게이션 후 이어가기)
+
+// ---- 시나리오 리스트/결과 상태 ----
+let scenarioNames = [];    // 저장된 시나리오 이름 목록 (리스트 렌더용 캐시)
+let scenarioResults = {};  // 이름 → { ran, running, completed, test:'PASS'|'FAIL'|null } 실행 결과
+let activeScenario = null; // 현재 재생 결과를 귀속시킬 시나리오 이름 (없으면 null)
+let batchRunning = false;  // 전체 실행(일괄) 진행 중 여부
+let batchNames = [];       // 전체 실행에서 남은 시나리오 큐
 
 // 루트로 진입 → 세션이 살아있으면 대시보드로, 아니면 /login 으로 사이트가 리다이렉트한다.
 const DEFAULT_URL = "https://tc.noricloud.org/";
@@ -45,7 +53,6 @@ const DEFAULT_URL = "https://tc.noricloud.org/";
 // ---- webview 초기화: 게스트 preload + 시작 URL ----
 view.setAttribute("preload", window.api.webviewPreloadURL);
 view.setAttribute("src", DEFAULT_URL);
-$("address").value = DEFAULT_URL;
 
 function sendToGuest(channel, ...args) {
   try { view.send(channel, ...args); } catch (_) {}

@@ -11,28 +11,6 @@
         display: flex; flex-direction: column; height: 100vh;
       }
 
-      /* 상단 주소창 */
-      #topbar {
-        display: flex; gap: 6px; align-items: center;
-        padding: 8px 10px; border-bottom: 1px solid #e3e3e3; background: #fafafa;
-        flex: 0 0 auto;
-      }
-      #topbar button {
-        padding: 6px 10px; font-size: 14px; border: 1px solid #ccc;
-        border-radius: 6px; background: #fff; cursor: pointer; white-space: nowrap;
-      }
-      #topbar button:hover { background: #eee; }
-      #address {
-        flex: 1; padding: 7px 10px; font-size: 13px;
-        border: 1px solid #ccc; border-radius: 6px;
-      }
-      #topbar .zoom-btn { flex: 0 0 auto; padding: 6px 9px; font-weight: 600; }
-      #zoomLabel {
-        flex: 0 0 auto; min-width: 46px; text-align: center; cursor: pointer;
-        font-size: 12px; color: #555; user-select: none;
-      }
-      #zoomLabel:hover { color: #1D9E75; }
-
       /* 본문: webview + 사이드 패널 */
       #body { flex: 1; display: flex; min-height: 0; }
       #view { flex: 1; border: none; }
@@ -75,6 +53,27 @@
       .badge-nav { color: #2E6FB5; }
       .badge-input { color: #7A3DB8; }
 
+      /* 시나리오 리스트 (행별 실행 + 완료/PASS·FAIL 배지) */
+      #scenarioList { max-height: 200px; overflow-y: auto; border: 1px solid #eee;
+                      border-radius: 6px; margin: 6px 0; }
+      .scRow { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+               font-size: 12px; border-bottom: 1px solid #f2f2f2; }
+      .scRow:last-child { border-bottom: none; }
+      .scRow.active { background: #eef7f2; }
+      .scRow .scName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; cursor: pointer; }
+      .scRow .scName:hover { color: #1D9E75; }
+      .scRow .scStep { margin-left: 6px; font-size: 11px; color: #8a6d00; font-weight: 600; }
+      .scRow .scRun { flex: 0 0 auto; padding: 2px 9px; font-size: 12px; }
+      .scBadge { flex: 0 0 auto; min-width: 44px; text-align: center; padding: 2px 6px;
+                 border-radius: 10px; font-size: 11px; font-weight: 600; }
+      .b-none  { color: #aaa; background: #f2f2f2; }
+      .b-run   { color: #8a6d00; background: #fbf3d6; }
+      .b-done  { color: #1D9E75; background: #e7f5ef; }
+      .b-abort { color: #A32D2D; background: #f7e9e9; }
+      .b-pass  { color: #1D9E75; background: #e7f5ef; }
+      .b-fail  { color: #fff; background: #A32D2D; }
+
       /* 접속(자동 로그인) 대기 오버레이 */
       #authOverlay {
         position: fixed; inset: 0; z-index: 100000; background: #f4f5f7;
@@ -107,17 +106,6 @@
     </style>
   </head>
   <body>
-    <div id="topbar">
-      <button id="backBtn" title="뒤로">◀</button>
-      <button id="fwdBtn" title="앞으로">▶</button>
-      <button id="reloadBtn" title="새로고침">⟳</button>
-      <input id="address" type="text" placeholder="https://..." />
-      <button id="goBtn">이동</button>
-      <button id="zoomOutBtn" class="zoom-btn" title="축소 (Ctrl+-)">－</button>
-      <span id="zoomLabel" title="클릭하면 100%로 복원">100%</span>
-      <button id="zoomInBtn" class="zoom-btn" title="확대 (Ctrl++)">＋</button>
-    </div>
-
     <div id="body">
       <!-- 대상 페이지. preload/src는 renderer/core.js가 런타임에 설정.
            partition: 세션 쿠키를 디스크에 유지 → 재실행 시 로그인 상태 지속 -->
@@ -165,6 +153,12 @@
           <button id="applyBtn" class="small">적용</button>
           <button id="deleteBtn" class="small danger">삭제</button>
         </div>
+
+        <!-- 시나리오 리스트: 행별로 개별 실행(▶) + 오른쪽 끝에 완료 여부/테스트 PASS·FAIL -->
+        <div class="row">
+          <button id="runAllBtn" class="primary">▶ 전체 실행</button>
+        </div>
+        <div id="scenarioList"></div>
 
         <div id="status">준비됨. 주소를 입력해 페이지를 연 뒤 녹화를 시작하세요.</div>
       </div>

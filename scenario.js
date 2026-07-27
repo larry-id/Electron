@@ -32,42 +32,20 @@ function renderScenarioList() {
   }
   scenarioNames.forEach((name) => {
     const r = scenarioResults[name] || {};
-    const isActiveRunning = playing && name === activeScenario;
     const row = document.createElement("div");
     row.className = "scRow" + (name === activeScenario ? " active" : "");
 
     const nm = document.createElement("span");
     nm.className = "scName";
+    nm.textContent = name;
     nm.title = "클릭하면 이 시나리오를 선택(적용)";
     nm.addEventListener("click", () => selectScenario(name));
-    const nmTitle = document.createElement("span");
-    nmTitle.textContent = name;
-    nm.appendChild(nmTitle);
-    // 현재 진행 중인 스텝 번호를 제목 옆에 표시 (이 시나리오가 재생 중일 때)
-    if (isActiveRunning && r.stepCur) {
-      const st = document.createElement("span");
-      st.className = "scStep";
-      st.textContent = `스텝 ${r.stepCur}${r.stepTotal ? "/" + r.stepTotal : ""}`;
-      nm.appendChild(st);
-    }
 
-    // 실행 버튼: 이 시나리오가 재생 중이면 일시정지(⏸)/이어서 재생(▶) 토글로 바뀐다.
     const run = document.createElement("button");
     run.className = "scRun";
-    if (isActiveRunning && !paused) {
-      run.textContent = "⏸";
-      run.title = "일시정지";
-      run.addEventListener("click", (e) => { e.stopPropagation(); pausePlayback(); });
-    } else if (isActiveRunning && paused) {
-      run.textContent = "▶";
-      run.title = "이어서 재생";
-      run.addEventListener("click", (e) => { e.stopPropagation(); resumePlayback(); });
-    } else {
-      run.textContent = "▶";
-      run.title = "이 시나리오만 실행";
-      run.disabled = playing;   // 다른 시나리오 재생 중이면 시작 불가
-      run.addEventListener("click", (e) => { e.stopPropagation(); runScenario(name); });
-    }
+    run.textContent = "▶";
+    run.title = "이 시나리오만 실행";
+    run.addEventListener("click", (e) => { e.stopPropagation(); runScenario(name); });
 
     // 완료 여부 배지
     const doneB = document.createElement("span");
@@ -110,13 +88,10 @@ async function runScenario(name) {
   beginPlayback(1);
 }
 
-// 실행 시작 표시 (진행 스텝 표시용 stepCur/stepTotal 초기화)
+// 실행 시작 표시
 function setScenarioRunning(name) {
   if (!name) return;
-  scenarioResults[name] = {
-    ran: true, running: true, completed: false, test: null,
-    stepCur: 0, stepTotal: playSteps.length
-  };
+  scenarioResults[name] = { ran: true, running: true, completed: false, test: null };
   renderScenarioList();
 }
 
@@ -149,6 +124,7 @@ async function batchNext() {
   if (!batchRunning) return;
   if (!batchNames.length) {
     batchRunning = false;
+    setStatus("전체 실행 완료.");
     showToast("전체 시나리오 실행이 끝났습니다.");
     return;
   }
