@@ -83,7 +83,7 @@ view.addEventListener("ipc-message", (e) => {
         setStatus("시나리오 재생 완료.");
         showToast("시나리오가 정상적으로 종료되었습니다.");
       }
-      if (batchRunning) batchNext();   // 전체 실행 중이면 다음 시나리오로
+      if (batchRunning) batchNext(batchGen);   // 전체 실행 중이면 다음 시나리오로
       break;
     }
 
@@ -93,7 +93,7 @@ view.addEventListener("ipc-message", (e) => {
       setScenarioResult(activeScenario, false, false);  // 완료 못 함 → 중단
       setStatus("재생 중단됨.");
       showToast("재생이 중단되었습니다.");
-      if (batchRunning) batchNext();
+      if (batchRunning) batchNext(batchGen);
       break;
   }
 });

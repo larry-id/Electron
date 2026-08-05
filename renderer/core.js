@@ -46,6 +46,9 @@ let scenarioResults = {};  // 이름 → { ran, running, completed, test:'PASS'|
 let activeScenario = null; // 현재 재생 결과를 귀속시킬 시나리오 이름 (없으면 null)
 let batchRunning = false;  // 전체 실행(일괄) 진행 중 여부
 let batchNames = [];       // 전체 실행에서 남은 시나리오 큐
+let batchGen = 0;          // 전체 실행 "세대". 재시작 때 증가시켜 이전 배치의 연속 호출을 무효화
+let batchAdvancing = false; // 다음 시나리오로 넘어가는 중복 진입 방지(재시작·잔여 play-done 대비)
+let scenarioFilter = "all"; // 리스트 보기 필터: "all" | "PASS" | "FAIL"
 
 // 루트로 진입 → 세션이 살아있으면 대시보드로, 아니면 /login 으로 사이트가 리다이렉트한다.
 const DEFAULT_URL = "https://tc.noricloud.org/";
