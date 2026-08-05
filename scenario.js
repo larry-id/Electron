@@ -21,77 +21,31 @@ async function refreshScenarios(selectName) {
   renderScenarioList();
 }
 
-// 필터 버튼(전체/PASS/FAIL) 라벨에 개수 표시 + 선택 상태 표시
-function updateFilterCounts() {
-  const pass = scenarioNames.filter((n) => (scenarioResults[n] || {}).test === "PASS").length;
-  const fail = scenarioNames.filter((n) => (scenarioResults[n] || {}).test === "FAIL").length;
-  if ($("fltAll"))  $("fltAll").textContent  = `전체 ${scenarioNames.length}`;
-  if ($("fltPass")) $("fltPass").textContent = `PASS ${pass}`;
-  if ($("fltFail")) $("fltFail").textContent = `FAIL ${fail}`;
-  const map = { all: "fltAll", PASS: "fltPass", FAIL: "fltFail" };
-  ["fltAll", "fltPass", "fltFail"].forEach((id) => $(id) && $(id).classList.remove("active"));
-  if ($(map[scenarioFilter])) $(map[scenarioFilter]).classList.add("active");
-}
-
 // 시나리오별 실행 결과를 담은 리스트 렌더 (오른쪽 끝에 완료 여부 + 테스트 PASS/FAIL)
-// 현재 필터(전체/PASS/FAIL)에 해당하는 시나리오만 표시한다.
 function renderScenarioList() {
   const box = $("scenarioList");
   if (!box) return;
-  updateFilterCounts();
   box.innerHTML = "";
   if (!scenarioNames.length) {
     box.innerHTML = '<div class="logEmpty">저장된 시나리오가 없습니다.</div>';
     return;
   }
-  const names = scenarioNames.filter((name) => {
-    if (scenarioFilter === "all") return true;
-    if (playing && name === activeScenario) return true; // 실행 중인 시나리오는 항상 표시
-    return (scenarioResults[name] || {}).test === scenarioFilter;
-  });
-  if (!names.length) {
-    const label = scenarioFilter === "PASS" ? "PASS" : "FAIL";
-    box.innerHTML = `<div class="logEmpty">${label} 시나리오가 없습니다.</div>`;
-    return;
-  }
-  names.forEach((name) => {
+  scenarioNames.forEach((name) => {
     const r = scenarioResults[name] || {};
-    const isActiveRunning = playing && name === activeScenario;
     const row = document.createElement("div");
     row.className = "scRow" + (name === activeScenario ? " active" : "");
 
     const nm = document.createElement("span");
     nm.className = "scName";
+    nm.textContent = name;
     nm.title = "클릭하면 이 시나리오를 선택(적용)";
     nm.addEventListener("click", () => selectScenario(name));
-    const nmTitle = document.createElement("span");
-    nmTitle.textContent = name;
-    nm.appendChild(nmTitle);
-    // 현재 진행 중인 스텝 번호를 제목 옆에 표시 (이 시나리오가 재생 중일 때)
-    if (isActiveRunning && r.stepCur) {
-      const st = document.createElement("span");
-      st.className = "scStep";
-      st.textContent = `스텝 ${r.stepCur}${r.stepTotal ? "/" + r.stepTotal : ""}`;
-      nm.appendChild(st);
-    }
 
-    // 실행 버튼: 이 시나리오가 재생 중이면 일시정지(⏸)/이어서 재생(▶) 토글로 바뀐다.
     const run = document.createElement("button");
     run.className = "scRun";
-    if (isActiveRunning && !paused) {
-      run.textContent = "⏸";
-      run.title = "일시정지";
-      run.addEventListener("click", (e) => { e.stopPropagation(); pausePlayback(); });
-    } else if (isActiveRunning && paused) {
-      run.textContent = "▶";
-      run.title = "이어서 재생";
-      run.addEventListener("click", (e) => { e.stopPropagation(); resumePlayback(); });
-    } else {
-      run.textContent = "▶";
-      run.title = "이 시나리오만 실행";
-      run.disabled = playing;   // 다른 시나리오 재생 중이면 시작 불가
-      run.addEventListener("click", (e) => { e.stopPropagation(); runScenario(name); });
-    }
+    run.textContent = "▶";
+    run.title = "이 시나리오만 실행";
+    run.addEventListener("click", (e) => { e.stopPropagation(); runScenario(name); });
 
     // 완료 여부 배지
     const doneB = document.createElement("span");
@@ -134,13 +88,10 @@ async function runScenario(name) {
   beginPlayback(1);
 }
 
-// 실행 시작 표시 (진행 스텝 표시용 stepCur/stepTotal 초기화)
+// 실행 시작 표시
 function setScenarioRunning(name) {
   if (!name) return;
-  scenarioResults[name] = {
-    ran: true, running: true, completed: false, test: null,
-    stepCur: 0, stepTotal: playSteps.length
-  };
+  scenarioResults[name] = { ran: true, running: true, completed: false, test: null };
   renderScenarioList();
 }
 
@@ -156,74 +107,38 @@ function setScenarioResult(name, completed, testFailed) {
   renderScenarioList();
 }
 
-// ---- 보기 필터 (전체 / PASS / FAIL) ----
-function setScenarioFilter(f) {
-  scenarioFilter = f;
-  renderScenarioList();   // updateFilterCounts 가 선택 버튼 강조 처리
-}
-$("fltAll").addEventListener("click", () => setScenarioFilter("all"));
-$("fltPass").addEventListener("click", () => setScenarioFilter("PASS"));
-$("fltFail").addEventListener("click", () => setScenarioFilter("FAIL"));
-
 // ---- 전체 실행 (일괄) ----
 $("runAllBtn").addEventListener("click", runAll);
-$("restartAllBtn").addEventListener("click", restartAll);
-
-// 처음부터 배치 시작(결과 초기화 후 첫 시나리오부터). 세대(gen)를 올려 이전 배치를 무효화.
-function startBatch() {
-  const gen = ++batchGen;
-  batchAdvancing = false;
-  paused = false; sendToGuest("set-paused", false);
-  playing = false;
-  batchNames = scenarioNames.slice();
-  batchRunning = true;
-  scenarioNames.forEach((n) => delete scenarioResults[n]); // 처음부터: 이전 PASS/FAIL 결과 초기화
-  setStatus(`전체 실행 시작 (${batchNames.length}개)`);
-  renderScenarioList();
-  batchNext(gen);
-}
 
 function runAll() {
-  if (playing || batchRunning) { setStatus("이미 실행 중입니다. (처음부터 다시 하려면 ↻ 처음부터)"); return; }
+  if (playing || batchRunning) { setStatus("이미 실행 중입니다."); return; }
   if (!scenarioNames.length) { setStatus("실행할 시나리오가 없습니다."); return; }
-  startBatch();
+  batchNames = scenarioNames.slice();
+  batchRunning = true;
+  setStatus(`전체 실행 시작 (${batchNames.length}개)`);
+  batchNext();
 }
 
-// 처음부터 재시작: 진행 중이어도 취소하고 첫 시나리오부터 다시 실행.
-// (batchGen 증가로 진행 중 배치의 연속 호출이 무효화되고, freshLoad 리로드가 기존 게스트 재생 루프를 종료시킨다.)
-function restartAll() {
-  if (!scenarioNames.length) { setStatus("실행할 시나리오가 없습니다."); return; }
-  setStatus("처음부터 재시작합니다…");
-  startBatch();
-}
-
-// 큐에서 다음 시나리오를 실행 (배치 시작 시 1회 + 각 재생 종료 시 ipc-router가 호출).
-// gen 이 현재 세대와 다르면(=재시작됨) 아무 것도 하지 않는다.
-async function batchNext(gen) {
-  if (gen !== batchGen) return;      // 무효화된(재시작된) 배치의 잔여 호출
+// 큐에서 다음 시나리오를 실행 (재생 종료 시 ipc-router가 호출)
+async function batchNext() {
   if (!batchRunning) return;
-  if (batchAdvancing) return;        // 다음 시나리오 진입 중복 방지(잔여 play-done 대비)
-  batchAdvancing = true;
-  try {
-    if (!batchNames.length) {
-      batchRunning = false;
-      showToast("전체 시나리오 실행이 끝났습니다.");
-      return;
-    }
-    const name = batchNames.shift();
-    activeScenario = name;
-    $("scenarioName").value = name;
-    steps = await window.api.loadScenario(name);
-    refreshCount();
-    renderScenarioList();
-    // 각 시나리오를 깨끗한 시작 상태에서: 첫 스텝 URL로 리로드해 이전 데모/앱스페이스를 정리
-    setStatus(`시작 상태로 이동 중… (${name})`);
-    await freshLoad(steps[0] && steps[0].url);
-    if (gen !== batchGen || !batchRunning) return;  // 이동 중 재시작·중지되면 중단
-    beginPlayback(1);
-  } finally {
-    batchAdvancing = false;
+  if (!batchNames.length) {
+    batchRunning = false;
+    setStatus("전체 실행 완료.");
+    showToast("전체 시나리오 실행이 끝났습니다.");
+    return;
   }
+  const name = batchNames.shift();
+  activeScenario = name;
+  $("scenarioName").value = name;
+  steps = await window.api.loadScenario(name);
+  refreshCount();
+  renderScenarioList();
+  // 각 시나리오를 깨끗한 시작 상태에서: 첫 스텝 URL로 리로드해 이전 데모/앱스페이스를 정리
+  setStatus(`시작 상태로 이동 중… (${name})`);
+  await freshLoad(steps[0] && steps[0].url);
+  if (!batchRunning) return;   // 이동 중 중지되면 중단
+  beginPlayback(1);
 }
 
 // ---- 내보내기 / 가져오기 (네이티브 대화상자) ----

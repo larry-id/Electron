@@ -10,7 +10,7 @@ view.addEventListener("did-navigate", (e) => {
   const now = Date.now();
   const delayMs = lastClickTs ? Math.min(now - lastClickTs, 5000) : 0;
   lastClickTs = now;
-  steps.push({ type: "navigate", url, delayMs });
+  steps.push({ type: "navigate", url, delayMs, zoom: zoomFactor });
   refreshCount();
 });
 
@@ -55,10 +55,14 @@ function setRecordBtn(isRecording) {
 function startRecording() {
   recording = true;
   lastClickTs = 0;
+  // 녹화는 항상 기본 레이아웃(줌 100%)에서 수행한다. 줌이 걸리면 CSS 뷰포트 폭이 달라져
+  // 반응형 '최소화 보기'로 바뀌고, 그 상태로 캡처한 셀렉터·좌표는 재생 때 어긋난다.
+  if (typeof setZoom === "function" && zoomFactor !== 1) setZoom(1);
   lastNavUrl = view.getURL();
+  activeScenario = null;   // 새로 녹화하는 스텝은 특정 저장 시나리오에 귀속되지 않음
   setRecordBtn(true);
   sendToGuest("set-recording", true);
-  setStatus("녹화 중… 페이지에서 클릭/입력/이동하세요. (오른쪽 위 페이지의 종료 버튼으로도 멈춤)");
+  setStatus("녹화 중… (줌은 100%로 고정됩니다) 페이지에서 클릭/입력/이동하세요. 오른쪽 위 종료 버튼으로도 멈춤");
 }
 
 function stopRecording() {
@@ -77,6 +81,8 @@ $("recordBtn").addEventListener("click", () => {
 // ---- 비우기 ----
 $("clearBtn").addEventListener("click", () => {
   steps = [];
+  activeScenario = null;
   refreshCount();
+  renderScenarioList();
   setStatus("스텝을 비웠습니다.");
 });

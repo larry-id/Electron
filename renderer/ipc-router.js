@@ -58,23 +58,42 @@ view.addEventListener("ipc-message", (e) => {
 
     case "play-progress": {
       if (a.ok) playCursor = a.index + 1; // 성공한 스텝 다음을 커서로
+      // 진행 중인 스텝 번호를 시나리오 리스트(제목 옆)에 반영
+      if (activeScenario && scenarioResults[activeScenario]) {
+        scenarioResults[activeScenario].stepCur = a.index + 1;
+        renderScenarioList();
+      }
       if (!a.ok) setStatus(`스텝 ${a.index + 1} 실패: ${a.reason}`);
       else setStatus(`재생 중… 스텝 ${a.index + 1}`);
       break;
     }
 
-    case "play-done":
+    case "play-done": {
       playing = false;
       setPlaying(false);
-      setStatus("시나리오 재생 완료.");
-      showToast("시나리오가 정상적으로 종료되었습니다.");
+      const done = a || {};
+      // 스텝 완료 여부(=완료) 와 테스트 실패 여부를 시나리오 리스트에 기록 (PASS/FAIL 구분)
+      setScenarioResult(activeScenario, true, done.testFailed);
+      if (done.testFailed) {
+        // 스텝은 끝까지 실행됐지만 대상 페이지가 실패 알림을 띄운 경우 = 테스트 FAIL
+        // (원본 페이지 문구/상세는 표시하지 않고 결과만 알린다)
+        setStatus("테스트 실패.");
+        showToast("⚠ 테스트 실패", 4000);
+      } else {
+        setStatus("시나리오 재생 완료.");
+        showToast("시나리오가 정상적으로 종료되었습니다.");
+      }
+      if (batchRunning) batchNext(batchGen);   // 전체 실행 중이면 다음 시나리오로
       break;
+    }
 
     case "play-abort":
       playing = false;
       setPlaying(false);
+      setScenarioResult(activeScenario, false, false);  // 완료 못 함 → 중단
       setStatus("재생 중단됨.");
       showToast("재생이 중단되었습니다.");
+      if (batchRunning) batchNext(batchGen);
       break;
   }
 });

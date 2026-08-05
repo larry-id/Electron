@@ -16,7 +16,7 @@
 // NOTE: preload는 파일 1개만 주입 가능하므로 renderer/ 처럼 여러 파일로 나누지 않고
 //       한 파일 안에서 섹션으로 구획한다. (ES 모듈/로컬 require 제약 회피)
 
-const { ipcRenderer } = require("electron");
+const { ipcRenderer, webFrame } = require("electron");
 
 if (window.__bcLoaded) {
   // 재주입 방지 (보통 preload는 페이지마다 1회지만 방어적으로)
@@ -29,6 +29,8 @@ if (window.__bcLoaded) {
 
   // 녹화 여부는 호스트(렌더러)가 단일 소스로 관리한다. 여기선 표시/캡처용 로컬 미러.
   let recording = false;
+  // 재생 일시정지 여부(호스트가 set-paused 로 토글). 재생 루프가 이 값을 보고 대기한다.
+  let paused = false;
   // 페이지가 언로드(이동) 중이면 재생 루프를 멈추기 위한 플래그
   let pageHiding = false;
   window.addEventListener("pagehide", () => { pageHiding = true; }, true);
@@ -125,6 +127,13 @@ if (window.__bcLoaded) {
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 현재 페이지 줌 배율(webview.setZoomFactor 로 호스트가 설정한 값과 동일).
+  // 줌이 걸리면 CSS 뷰포트 폭이 바뀌어 반응형 레이아웃(접힌/최소화 보기)이 달라지므로
+  // 스텝에 녹화 당시의 줌을 함께 기록해 두고, 재생 때 같은 줌으로 되돌려 레이아웃을 맞춘다.
+  function zoomNow() {
+    try { return webFrame.getZoomFactor() || 1; } catch (_) { return 1; }
+  }
 
   // 클릭/입력 위치에 잠깐 떴다 사라지는 원형 시각 효과
   function flash(x, y, color) {
@@ -232,6 +241,7 @@ if (window.__bcLoaded) {
       x: Math.round(r.left + r.width / 2),
       y: Math.round(r.top + r.height / 2),
       url: location.href,
+      zoom: zoomNow(),
       ts: Date.now()
     };
     // change(커밋) 이벤트는 input과 값이 중복되므로 새 스텝을 만들지 않고 기존 값만 갱신
@@ -258,6 +268,7 @@ if (window.__bcLoaded) {
       x: Math.round(r.left + r.width / 2),
       y: Math.round(r.top + r.height / 2),
       url: location.href,
+      zoom: zoomNow(),
       ts: Date.now()
     };
     ipcRenderer.sendToHost("step", step);
@@ -279,6 +290,7 @@ if (window.__bcLoaded) {
       label: describeElement(e.target),
       tag: e.target instanceof Element ? e.target.nodeName.toLowerCase() : "",
       url: location.href,
+      zoom: zoomNow(),
       ts: Date.now(),
       button: e.button === 2 ? "right" : e.button === 1 ? "middle" : "left"
     };
@@ -447,10 +459,58 @@ if (window.__bcLoaded) {
     return { ok: true };
   }
 
+  // ---- 테스트 실패 알림 감지 ----
+  // 재생 스텝이 끝까지 성공해도, 대상 페이지가 "테스트 시작 실패" 알림을 띄우면 테스트는 실패로 본다.
+  const TEST_FAIL_RE = /테스트\s*시작\s*실패/;
+  let testFailure = null;       // 재생 중 감지된 실패 메시지(없으면 null)
+  let testFailObserver = null;
+
+  function failureTextOf(node) {
+    if (!(node instanceof Element)) return null;
+    const t = (node.innerText || node.textContent || "").trim();
+    return t && TEST_FAIL_RE.test(t) ? t.replace(/\s+/g, " ").slice(0, 300) : null;
+  }
+
+  // 알림성 컨테이너에서 실패 문구를 재확인(뒤늦게 뜬 알림 대비)
+  function scanTestFailureNow() {
+    const sel = '[role="alert"], [class*="error" i], [class*="alert" i], [class*="toast" i], [class*="message" i], [class*="notification" i], .ant-message, .ant-notification';
+    for (const el of document.querySelectorAll(sel)) {
+      const hit = failureTextOf(el);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function startTestFailWatch() {
+    testFailure = null;
+    if (testFailObserver) return;
+    testFailObserver = new MutationObserver((muts) => {
+      for (const m of muts) {
+        for (const node of m.addedNodes) {
+          const hit = failureTextOf(node);
+          if (hit) { testFailure = hit; return; }
+        }
+      }
+    });
+    try { testFailObserver.observe(document.body, { childList: true, subtree: true }); } catch (_) {}
+  }
+
+  function stopTestFailWatch() {
+    if (testFailObserver) { testFailObserver.disconnect(); testFailObserver = null; }
+  }
+
+  // 일시정지 중이면(그리고 페이지가 살아있으면) 해제될 때까지 대기.
+  async function waitWhilePaused() {
+    while (paused && !pageHiding) await sleep(120);
+  }
+
   // 이 페이지에 해당하는 스텝들을 순서대로 재생.
   // 페이지 이동이 필요한 스텝을 만나면 호스트에 넘기고 종료(다음 페이지에서 이어감).
   async function playFrom(steps, startIndex, resumed) {
+    startTestFailWatch();
     for (let i = startIndex; i < steps.length; i++) {
+      if (pageHiding) return;
+      await waitWhilePaused();          // 일시정지 상태면 스텝 시작 전에 대기
       if (pageHiding) return;
       const step = steps[i];
       await sleep(Math.max(step.delayMs || 300, 150));
@@ -474,11 +534,17 @@ if (window.__bcLoaded) {
         index: i, ok: res.ok, reason: res.reason || null
       });
       if (!res.ok) {
+        stopTestFailWatch();
         ipcRenderer.sendToHost("play-abort");
         return;
       }
     }
-    ipcRenderer.sendToHost("play-done");
+    // 스텝은 모두 실행됐다. 다만 "테스트 시작 실패" 알림이 서버 응답으로 늦게 뜰 수 있어
+    // 잠깐 기다린 뒤, 감지된 실패가 있으면 결과에 담아 보낸다.
+    await sleep(1500);
+    if (!testFailure) testFailure = scanTestFailureNow();
+    stopTestFailWatch();
+    ipcRenderer.sendToHost("play-done", { testFailed: !!testFailure, message: testFailure || null });
   }
 
   // ==================================================================
@@ -594,6 +660,9 @@ if (window.__bcLoaded) {
   ipcRenderer.on("autologin", (_e, creds) => { autoLogin(creds); });
 
   ipcRenderer.on("set-recording", (_e, value) => setRecording(!!value));
+
+  // 호스트가 재생 일시정지/재개를 토글 → 재생 루프가 waitWhilePaused 로 대기/진행
+  ipcRenderer.on("set-paused", (_e, value) => { paused = !!value; });
 
   ipcRenderer.on("play-from", (_e, steps, startIndex) => {
     playFrom(steps || [], startIndex || 0, false); // 최초 재생 시작
